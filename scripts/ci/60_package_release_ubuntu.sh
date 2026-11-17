@@ -7,8 +7,6 @@ set -euo pipefail
 : "${IMAGE_CHUNK_SIZE:?missing IMAGE_CHUNK_SIZE}"
 : "${UBUNTU_RELEASE:?missing UBUNTU_RELEASE}"
 : "${KERNEL_TAG:?missing KERNEL_TAG}"
-: "${DESKTOP_ENVIRONMENT:?missing DESKTOP_ENVIRONMENT}"
-: "${EXTRA_PACKAGES:?missing EXTRA_PACKAGES}"
 
 KREL="$(cat "$WORKDIR/kernel-release.txt")"
 BUILD_EL2="${BUILD_EL2:-false}"
@@ -54,10 +52,10 @@ ${EL2_RELEASE_BLOCK}
 - Compressed File: \`${IMAGE_BASENAME}.zst\`
 - Build Time (UTC): \`$(date -u +"%Y-%m-%dT%H:%M:%SZ")\`
 
-## Rootfs Selection
+## Rootfs Profile
 
-- Desktop Environment: \`${DESKTOP_ENVIRONMENT}\`
-- Extra Packages: \`${EXTRA_PACKAGES}\`
+- Minimal English TTY image; no desktop environment, Snap, Firefox or Nautilus
+- Includes NetworkManager, Wi-Fi support, Bluetooth, Neovim, Nano, Git and Gaokun touchscreen tuning support
 
 ## Default Login
 
@@ -84,10 +82,10 @@ ${EL2_RELEASE_BLOCK}
 - Compressed File: \`${IMAGE_BASENAME}.zst\`
 - Build Time (UTC): \`$(date -u +"%Y-%m-%dT%H:%M:%SZ")\`
 
-## Rootfs Selection
+## Rootfs Profile
 
-- Desktop Environment: \`${DESKTOP_ENVIRONMENT}\`
-- Extra Packages: \`${EXTRA_PACKAGES}\`
+- Minimal English TTY image; no desktop environment, Snap, Firefox or Nautilus
+- Includes NetworkManager, Wi-Fi support, Bluetooth, Neovim, Nano, Git and Gaokun touchscreen tuning support
 
 ## Default Login
 
