@@ -211,7 +211,7 @@ apt-get install -y --no-install-recommends \
 # wpasupplicant is listed explicitly because package recommendations are
 # disabled above.
 apt-get install -y --no-install-recommends \
-    network-manager wpasupplicant bluez \
+    network-manager wpasupplicant bluez systemd-resolved \
     neovim nano git sudo \
     python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
 

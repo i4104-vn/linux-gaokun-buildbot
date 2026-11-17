@@ -249,7 +249,7 @@ jobs:
             # not install a desktop environment.  wpasupplicant is explicit
             # because recommends are disabled above.
             apt-get install -y --no-install-recommends \
-              network-manager wpasupplicant bluez \
+              network-manager wpasupplicant bluez systemd-resolved \
               neovim nano git sudo \
               python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
 
