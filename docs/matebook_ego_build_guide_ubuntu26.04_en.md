@@ -6,7 +6,7 @@ English | [中文](matebook_ego_build_guide_ubuntu26.04_zh.md)
 
 > **Target Device**: Huawei MateBook E Go 2023 (codename `gaokun3`)  
 > **Platform**: Qualcomm Snapdragon 8cx Gen3 (`SC8280XP`)  
-> **Target System**: Ubuntu 26.04 (Resolute Raccoon) GNOME, systemd-boot boot, ext4 root filesystem  
+> **Target System**: Ubuntu 26.04 (Resolute Raccoon) minimal English TTY system, systemd-boot boot, ext4 root filesystem
 > **Recommended Host**: Ubuntu/Debian or other distributions supporting `debootstrap`  
 > **Repository Assumption**: This document assumes your current repository is at `~/gaokun/linux-gaokun-buildbot`
 
@@ -132,7 +132,7 @@ ccache -s
 
 ## Step 3: Build RootFS
 
-Use Ubuntu's official `ubuntu-base` prebuilt rootfs as base, then install desktop environment and additional packages via chroot.
+Use Ubuntu's official `ubuntu-base` prebuilt rootfs as the base. This guide deliberately creates an English-only, TTY-only system: it installs no desktop environment, Snap, Firefox, Nautilus, GNOME components, or Chinese language/input packages. The Gaokun touchscreen calibration utility and monitor-sync helper remain installed so they are ready when you later add a desktop environment.
 
 > If the host is x86_64, you need to copy `qemu-aarch64-static` to the rootfs to support chroot execution of arm64 binaries.  
 > [avikivity/qemu-aarch64-static-fast](https://github.com/avikivity/qemu-aarch64-static-fast) is a parameter wrapper for QEMU user-mode emulator. It transparently improves AArch64 program execution efficiency in non-native environments by dynamically injecting high-performance CPU flags (such as `pauth-impdef=on`) at runtime.
@@ -182,10 +182,20 @@ Execute inside chroot:
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
-apt-get install -y locales
-sed -i 's/# zh_CN.UTF-8/zh_CN.UTF-8/' /etc/locale.gen
+cat > /etc/apt/apt.conf.d/99gaokun-minimal <<'EOF'
+APT::Install-Recommends "false";
+APT::Install-Suggests "false";
+EOF
+cat > /etc/apt/preferences.d/no-snapd <<'EOF'
+Package: snapd
+Pin: *
+Pin-Priority: -1
+EOF
+
+apt-get install -y --no-install-recommends locales
+sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
 locale-gen
-update-locale LANG=zh_CN.UTF-8 LANGUAGE=zh_CN:en_US:en LC_MESSAGES=zh_CN.UTF-8
+update-locale LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_MESSAGES=en_US.UTF-8
 rm -f /etc/resolv.conf
 ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
@@ -196,47 +206,18 @@ apt-get install -y \
 apt-get install -y --no-install-recommends \
     systemd-boot systemd-boot-efi
 
-# Install basic network and compression tools (may be missing in ubuntu-base)
-apt-get install -y \
-    iputils-ping iproute2 net-tools dnsutils traceroute \
-    xz-utils unzip zip bzip2 zstd p7zip-full \
-    wget curl ca-certificates gnupg lsb-release \
-    less file sudo
+# Required interactive tools, connectivity, and the touchscreen calibration
+# utility runtime. GTK bindings do not install a desktop environment.
+# wpasupplicant is listed explicitly because package recommendations are
+# disabled above.
+apt-get install -y --no-install-recommends \
+    network-manager wpasupplicant bluez \
+    neovim nano git sudo \
+    python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
 
-# Configure Mozilla official APT repository, install native deb version Firefox
-install -d -m 0755 /etc/apt/keyrings
-wget -qO- https://packages.mozilla.org/apt/repo-signing-key.gpg | \
-    gpg --dearmor -o /etc/apt/keyrings/packages.mozilla.org.gpg
-
-cat > /etc/apt/sources.list.d/mozilla.list <<EOF
-deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.gpg] https://packages.mozilla.org/apt mozilla main
-EOF
-
-cat > /etc/apt/preferences.d/mozilla <<EOF
-Package: *
-Pin: origin packages.mozilla.org
-Pin-Priority: 1000
-EOF
-
-apt-get update
-
-# Install desktop environment and common software
-apt-get install -y \
-    ubuntu-desktop-minimal \
-    language-pack-gnome-zh-hans \
-    fonts-noto-cjk \
-    fonts-noto-color-emoji \
-    fcitx5-chinese-addons \
-    gnome-tweaks gnome-shell-extension-manager \
-    mpv v4l-utils vim nano ripgrep git htop screen \
-    alsa-utils pipewire-alsa \
-    ssh \
-    firefox
-
-# Install multimedia codecs
-apt-get install -y \
-    gstreamer1.0-libav gstreamer1.0-plugins-ugly \
-    ubuntu-restricted-extras
+# Start at the text login target; NetworkManager and Bluetooth remain usable.
+systemctl set-default multi-user.target
+systemctl enable NetworkManager bluetooth systemd-resolved
 
 apt-get clean
 exit
@@ -286,14 +267,15 @@ fi
 sudo mkdir -p $ROOTFS_DIR/lib/firmware
 sudo cp -r $FW_REPO/. $ROOTFS_DIR/lib/firmware/
 
-# Install project's device-specific scripts and services
+# Install device-specific touchscreen, Bluetooth and audio integration.
 sudo mkdir -p $ROOTFS_DIR/usr/local/bin
 sudo mkdir -p $ROOTFS_DIR/usr/local/lib/gaokun-touchscreen-tuner
 sudo mkdir -p $ROOTFS_DIR/etc/systemd/system
 sudo mkdir -p $ROOTFS_DIR/usr/share/alsa/ucm2/Qualcomm/sc8280xp
 sudo mkdir -p $ROOTFS_DIR/usr/share/applications
 
-# Touchscreen tuner script and desktop entry
+# Touchscreen tuner: a GUI utility for the Gaokun-specific algorithm. It is
+# dormant in the TTY image and becomes usable after a DE/compositor is added.
 sudo cp $GAOKUN_DIR/tools/touchscreen-tuner/touchscreen-tune \
     $ROOTFS_DIR/usr/local/bin/touchscreen-tune
 sudo cp $GAOKUN_DIR/tools/touchscreen-tuner/tune.py \
@@ -304,7 +286,8 @@ sudo cp $GAOKUN_DIR/tools/touchscreen-tuner/touchscreen-tune.desktop \
     $ROOTFS_DIR/usr/share/applications/touchscreen-tune.desktop
 sudo chmod +x $ROOTFS_DIR/usr/local/bin/touchscreen-tune
 
-# GDM monitor sync script and service
+# Keep the monitor helper for a later GDM installation; it does nothing until
+# GDM and a graphical target are present.
 sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync \
     $ROOTFS_DIR/usr/local/bin/
 sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync.service \
@@ -322,7 +305,7 @@ sudo chmod +x $ROOTFS_DIR/usr/local/bin/patch-nvm-bdaddr.py
 sudo cp $GAOKUN_DIR/tools/audio/sc8280xp.conf \
     $ROOTFS_DIR/usr/share/alsa/ucm2/Qualcomm/sc8280xp/
 
-# Shared image assets used by the CI image pipeline
+# Kernel module load and dependency settings used by the CI image pipeline.
 sudo mkdir -p $ROOTFS_DIR/usr/local/share/gaokun
 sudo cp -a $GAOKUN_DIR/tools/image-assets/etc/. \
     $ROOTFS_DIR/etc/
@@ -442,24 +425,11 @@ cat > /etc/kernel/devicetree <<EOF
 qcom/sc8280xp-huawei-gaokun3.dtb
 EOF
 
-systemctl enable gdm-monitor-sync.service \
-    patch-nvm-bdaddr.service
+install -d -m 0755 /home/user/.config
+install -Dm644 /usr/local/share/gaokun/monitors.xml /home/user/.config/monitors.xml
+chown -R user:user /home/user
 
-cat > /etc/systemd/system/gaokun-fix-x11-unix.service <<'EOF'
-[Unit]
-Description=Fix /tmp/.X11-unix ownership for Xwayland
-After=gdm.service
-Wants=gdm.service
-
-[Service]
-Type=oneshot
-ExecStart=/bin/sh -c 'mkdir -p /tmp/.X11-unix && chown root:root /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix'
-
-[Install]
-WantedBy=graphical.target
-EOF
-
-systemctl enable gaokun-fix-x11-unix.service
+systemctl enable patch-nvm-bdaddr.service gdm-monitor-sync.service
 
 run_update_initramfs() {
     local krel="$1"

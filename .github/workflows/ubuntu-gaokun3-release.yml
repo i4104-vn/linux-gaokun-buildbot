@@ -3,14 +3,6 @@ name: Build Image - Ubuntu Gaokun3
 on:
   workflow_dispatch:
     inputs:
-      desktop_environment:
-        description: Desktop environment metapackage
-        required: true
-        default: "ubuntu-desktop-minimal"
-      extra_packages:
-        description: Extra packages to install (space-separated)
-        required: true
-        default: "language-pack-gnome-zh-hans fcitx5-chinese-addons gnome-tweaks gnome-shell-extension-manager mpv v4l-utils vim nano ripgrep git htop rsync mutter screen firefox"
       build_el2:
         description: Build and include optional -gaokun3-el2 kernel and EL2 EFI payloads
         required: true
@@ -39,10 +31,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
     env:
       TZ: UTC
-      DESKTOP_ENVIRONMENT: ${{ github.event.inputs.desktop_environment }}
-      EXTRA_PACKAGES: ${{ github.event.inputs.extra_packages }}
       BUILD_EL2: ${{ github.event.inputs.build_el2 }}
-      IMAGE_SIZE: 12G
+      IMAGE_SIZE: 6G
       IMAGE_CHUNK_SIZE: 1900M
       GAOKUN_DIR: ${{ github.workspace }}
       WORKDIR: ${{ github.workspace }}/build-ubuntu
@@ -229,11 +219,23 @@ jobs:
           sudo chroot "$ROOTFS_DIR" /usr/bin/env UBUNTU_RELEASE="$UBUNTU_RELEASE" /bin/bash -euxo pipefail -c '
             export DEBIAN_FRONTEND=noninteractive
 
+            # Keep the image intentionally TTY-only.  Do not install a desktop
+            # metapackage: it would pull in GNOME, Snap and GUI applications.
+            cat > /etc/apt/apt.conf.d/99gaokun-minimal <<'EOF'
+            APT::Install-Recommends "false";
+            APT::Install-Suggests "false";
+            EOF
+            cat > /etc/apt/preferences.d/no-snapd <<'EOF'
+            Package: snapd
+            Pin: *
+            Pin-Priority: -1
+            EOF
+
             apt-get update
-            apt-get install -y locales
-            sed -i "s/# zh_CN.UTF-8/zh_CN.UTF-8/" /etc/locale.gen
+            apt-get install -y --no-install-recommends locales
+            sed -i "s/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/" /etc/locale.gen
             locale-gen
-            update-locale LANG=zh_CN.UTF-8 LANGUAGE=zh_CN:en_US:en LC_MESSAGES=zh_CN.UTF-8
+            update-locale LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_MESSAGES=en_US.UTF-8
 
             apt-get install -y \
               linux-base initramfs-tools kmod
@@ -241,41 +243,38 @@ jobs:
             apt-get install -y --no-install-recommends \
               systemd-boot systemd-boot-efi
 
-            # Base system tools (not user-configurable)
-            apt-get install -y \
-              iputils-ping iproute2 net-tools dnsutils traceroute \
-              xz-utils unzip zip bzip2 zstd p7zip-full \
-              wget curl ca-certificates gnupg lsb-release \
-              ssh less file sudo
+            # The complete interactive payload: editors, source control,
+            # wired/Wi-Fi networking and Bluetooth.  The GTK bindings are the
+            # runtime for Gaokun's touchscreen calibration utility; they do
+            # not install a desktop environment.  wpasupplicant is explicit
+            # because recommends are disabled above.
+            apt-get install -y --no-install-recommends \
+              network-manager wpasupplicant bluez \
+              neovim nano git sudo \
+              python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
 
-            install -d -m 0755 /etc/apt/keyrings
-            wget -qO- https://packages.mozilla.org/apt/repo-signing-key.gpg | \
-              gpg --dearmor -o /etc/apt/keyrings/packages.mozilla.org.gpg
-
-            printf "%s\n" \
-              "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.gpg] https://packages.mozilla.org/apt mozilla main" \
-              > /etc/apt/sources.list.d/mozilla.list
-
-            printf "%s\n" \
-              "Package: *" \
-              "Pin: origin packages.mozilla.org" \
-              "Pin-Priority: 1000" \
-              > /etc/apt/preferences.d/mozilla
-
-            apt-get update
-
-            apt-get install -y \
-              '"$DESKTOP_ENVIRONMENT"' \
-              fonts-noto-cjk fonts-noto-color-emoji \
-              gstreamer1.0-libav gstreamer1.0-plugins-ugly \
-              alsa-utils pipewire-alsa \
-              '"$EXTRA_PACKAGES"'
-
-            if dpkg --compare-versions "${UBUNTU_RELEASE}" gt "25.10"; then
-                # We use ptyxis instead of gnome-terminal
-                apt purge --auto-remove -y gnome-terminal
+            # ubuntu-base is already lean, but make the invariant explicit so a
+            # future base tarball or dependency change cannot leave desktop or
+            # Chinese-language packages in the artifact.
+            forbidden_packages=(
+              snapd firefox firefox-esr nautilus
+              gdm3 gnome-shell ubuntu-desktop ubuntu-desktop-minimal
+              language-pack-zh-hans language-pack-zh-hant
+              language-pack-gnome-zh-hans language-pack-gnome-zh-hant
+              fcitx5-chinese-addons
+            )
+            installed_forbidden=()
+            for package in "${forbidden_packages[@]}"; do
+              if dpkg-query -W -f=\${db:Status-Status} "$package" 2>/dev/null | grep -qx installed; then
+                installed_forbidden+=("$package")
+              fi
+            done
+            if (( ${#installed_forbidden[@]} )); then
+              apt-get purge -y "${installed_forbidden[@]}"
             fi
+            apt-get autoremove --purge -y
             apt-get clean
+            rm -rf /var/lib/apt/lists/*
           '
 
           cleanup

@@ -6,7 +6,7 @@ Build scripts, tools, and firmware for Linux images targeting the Huawei MateBoo
 
 **Migration draft, not ready for release.** The target repositories are `gaokun3/linux` and `gaokun3/buildbot`. The candidate kernel commit still needs publication; EL2 is disabled pending migration. See the [migration checklist](docs/migration.md).
 
-`build.env` pins the kernel SHA and distribution versions. Use `./build.sh kernel|debs|rpms` locally; image assembly currently runs through CI. Drivers, DTS and defconfig belong in the downstream kernel tree.
+`build.env` pins the kernel SHA and distribution versions. Use `./build.sh kernel|debs|rpms` locally; image assembly currently runs through CI. The Ubuntu workflow builds a lean English-only TTY image with no desktop environment, Snap, Firefox, Nautilus or Chinese language packages. It includes NetworkManager, Wi-Fi support, Bluetooth, Neovim, Nano and Git. Drivers, DTS and defconfig belong in the downstream kernel tree.
 
 ## What is included
 

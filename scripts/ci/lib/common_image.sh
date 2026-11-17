@@ -31,7 +31,6 @@ install_common_image_assets() {
     "$rootfs_dir/usr/local/bin" \
     "$rootfs_dir/usr/local/lib/gaokun-touchscreen-tuner" \
     "$rootfs_dir/usr/share/alsa/ucm2/Qualcomm/sc8280xp" \
-    "$rootfs_dir/usr/share/applications" \
     "$rootfs_dir/usr/local/share/gaokun"
 
   sudo cp -a "$gaokun_dir/tools/image-assets/etc/modules-load.d/." \

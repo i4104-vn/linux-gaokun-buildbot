@@ -73,48 +73,21 @@ mkdir -p /etc/sudoers.d
 echo "%sudo ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/sudo-nopasswd
 chmod 440 /etc/sudoers.d/sudo-nopasswd
 cat > /etc/default/locale <<'EOF'
-LANG=zh_CN.UTF-8
-LANGUAGE=zh_CN:en_US:en
-LC_MESSAGES=zh_CN.UTF-8
+LANG=en_US.UTF-8
+LANGUAGE=en_US:en
+LC_MESSAGES=en_US.UTF-8
 EOF
 
 rm -f /etc/resolv.conf
 ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
-mkdir -p /var/lib/AccountsService/users
-cat > /var/lib/AccountsService/users/user <<'EOF'
-[User]
-Language=zh_CN.UTF-8
-EOF
-cat > /var/lib/AccountsService/users/gdm <<'EOF'
-[User]
-Language=zh_CN.UTF-8
-SystemAccount=true
-EOF
-
 install -d -m 0755 /home/user/.config
 install -Dm644 /usr/local/share/gaokun/monitors.xml /home/user/.config/monitors.xml
 chown -R user:user /home/user
 
-install -d -m 1777 -o root -g root /tmp/.X11-unix
-
-cat > /etc/systemd/system/gaokun-fix-x11-unix.service <<'EOF'
-[Unit]
-Description=Fix /tmp/.X11-unix ownership for Xwayland
-After=gdm.service
-Wants=gdm.service
-
-[Service]
-Type=oneshot
-ExecStart=/bin/sh -c 'mkdir -p /tmp/.X11-unix && chown root:root /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix'
-
-[Install]
-WantedBy=graphical.target
-EOF
-
-systemctl enable gdm NetworkManager ssh \
-  gaokun-fix-x11-unix.service gdm-monitor-sync.service \
-  patch-nvm-bdaddr.service || true
+systemctl set-default multi-user.target
+systemctl enable NetworkManager bluetooth systemd-resolved \
+  patch-nvm-bdaddr.service gdm-monitor-sync.service
 
 cat >> /etc/initramfs-tools/modules <<'MODEOF'
 # Storage and USB
