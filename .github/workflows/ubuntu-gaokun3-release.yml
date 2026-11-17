@@ -221,15 +221,15 @@ jobs:
 
             # Keep the image intentionally TTY-only.  Do not install a desktop
             # metapackage: it would pull in GNOME, Snap and GUI applications.
-            cat > /etc/apt/apt.conf.d/99gaokun-minimal <<'EOF'
-            APT::Install-Recommends "false";
-            APT::Install-Suggests "false";
-            EOF
-            cat > /etc/apt/preferences.d/no-snapd <<'EOF'
-            Package: snapd
-            Pin: *
-            Pin-Priority: -1
-            EOF
+            printf "%s\n" \
+              "APT::Install-Recommends \"false\";" \
+              "APT::Install-Suggests \"false\";" \
+              > /etc/apt/apt.conf.d/99gaokun-minimal
+            printf "%s\n" \
+              "Package: snapd" \
+              "Pin: *" \
+              "Pin-Priority: -1" \
+              > /etc/apt/preferences.d/no-snapd
 
             apt-get update
             apt-get install -y --no-install-recommends locales
@@ -245,7 +245,7 @@ jobs:
 
             # The complete interactive payload: editors, source control,
             # wired/Wi-Fi networking and Bluetooth.  The GTK bindings are the
-            # runtime for Gaokun's touchscreen calibration utility; they do
+            # runtime for the Gaokun touchscreen calibration utility; they do
             # not install a desktop environment.  wpasupplicant is explicit
             # because recommends are disabled above.
             apt-get install -y --no-install-recommends \
