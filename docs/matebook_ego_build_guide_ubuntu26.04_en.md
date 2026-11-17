@@ -196,8 +196,12 @@ apt-get install -y --no-install-recommends locales
 sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
 locale-gen
 update-locale LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_MESSAGES=en_US.UTF-8
-rm -f /etc/resolv.conf
-ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+if systemctl list-unit-files systemd-resolved.service --no-legend 2>/dev/null | \
+    grep -q '^systemd-resolved\.service'; then
+    rm -f /etc/resolv.conf
+    ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+    systemctl enable systemd-resolved
+fi
 
 # First install kernel-related dependencies and initramfs-tools
 apt-get install -y \
@@ -217,7 +221,7 @@ apt-get install -y --no-install-recommends \
 
 # Start at the text login target; NetworkManager and Bluetooth remain usable.
 systemctl set-default multi-user.target
-systemctl enable NetworkManager bluetooth systemd-resolved
+systemctl enable NetworkManager bluetooth
 
 apt-get clean
 exit

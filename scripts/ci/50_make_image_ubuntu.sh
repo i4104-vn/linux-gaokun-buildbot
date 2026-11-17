@@ -78,15 +78,19 @@ LANGUAGE=en_US:en
 LC_MESSAGES=en_US.UTF-8
 EOF
 
-rm -f /etc/resolv.conf
-ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+if systemctl list-unit-files systemd-resolved.service --no-legend 2>/dev/null | \
+  grep -q '^systemd-resolved\.service'; then
+  rm -f /etc/resolv.conf
+  ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  systemctl enable systemd-resolved
+fi
 
 install -d -m 0755 /home/user/.config
 install -Dm644 /usr/local/share/gaokun/monitors.xml /home/user/.config/monitors.xml
 chown -R user:user /home/user
 
 systemctl set-default multi-user.target
-systemctl enable NetworkManager bluetooth systemd-resolved \
+systemctl enable NetworkManager bluetooth \
   patch-nvm-bdaddr.service gdm-monitor-sync.service
 
 cat >> /etc/initramfs-tools/modules <<'MODEOF'
