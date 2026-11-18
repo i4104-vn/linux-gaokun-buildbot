@@ -29,14 +29,12 @@ ROOT_UUID="$(sudo blkid -s UUID -o value "${LOOP}p2")"
 MNT=/mnt/ego-arch
 cleanup() {
   set +e
-  sudo umount "$MNT/dev/pts" 2>/dev/null || true
-  sudo umount "$MNT/boot" 2>/dev/null || true
-  sudo umount "$MNT/dev" 2>/dev/null || true
-  sudo umount "$MNT/proc" 2>/dev/null || true
-  sudo umount "$MNT/sys" 2>/dev/null || true
-  sudo umount "$MNT/run" 2>/dev/null || true
-  sudo umount "$MNT" 2>/dev/null || true
-  sudo losetup -d "$LOOP" 2>/dev/null || true
+  for m in "$MNT/dev/pts" "$MNT/boot" "$MNT/dev" "$MNT/proc" "$MNT/sys" "$MNT/run" "$MNT"; do
+    if [ -n "$m" ] && mountpoint -q "$m"; then
+      sudo umount "$m" 2>/dev/null || sudo umount -l "$m" 2>/dev/null || true
+    fi
+  done
+  [[ -z "${LOOP:-}" ]] || sudo losetup -d "$LOOP" 2>/dev/null || true
 }
 trap cleanup EXIT
 

@@ -128,13 +128,16 @@ jobs:
 
             # Trim package cache to keep the image small.
             pacman -Scc --noconfirm
+
+            # Terminate any background daemons (e.g. gpg-agent from pacman-key)
+            gpgconf --homedir /etc/pacman.d/gnupg --kill all 2>/dev/null || true
           '
 
-          sudo umount "$ROOTFS_DIR/dev/pts"
-          sudo umount "$ROOTFS_DIR/dev"
-          sudo umount "$ROOTFS_DIR/proc"
-          sudo umount "$ROOTFS_DIR/sys"
-          sudo umount "$ROOTFS_DIR/run"
+          for m in "$ROOTFS_DIR/dev/pts" "$ROOTFS_DIR/dev" "$ROOTFS_DIR/proc" "$ROOTFS_DIR/sys" "$ROOTFS_DIR/run"; do
+            if mountpoint -q "$m"; then
+              sudo umount "$m" 2>/dev/null || sudo umount -l "$m" 2>/dev/null || true
+            fi
+          done
 
           # Clean up temporary DNS; the image script sets the final config.
           sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
