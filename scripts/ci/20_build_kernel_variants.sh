@@ -77,6 +77,10 @@ else
   git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
 fi
 
+# Keep defconfig and DTS synchronized with the repository
+cp -f "$GAOKUN_DIR/defconfig/gaokun3_defconfig" "$KERN_SRC/arch/arm64/configs/gaokun3_defconfig"
+cp -f "$GAOKUN_DIR"/dts/*.dts* "$KERN_SRC/arch/arm64/boot/dts/qcom/" 2>/dev/null || true
+
 ccache -z || true
 build_variant "$KERN_SRC" "$KERN_OUT"
 ccache -s || true

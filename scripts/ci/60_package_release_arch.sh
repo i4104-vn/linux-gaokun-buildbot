@@ -44,7 +44,7 @@ zstd -d ${IMAGE_BASENAME}.zst -o ${IMAGE_BASENAME}
 ## Rootfs Profile
 
 - Minimal English TTY image; no desktop environment
-- Includes NetworkManager, Wi-Fi (ath11k), Bluetooth, OpenSSH, ALSA audio, Nano, Git
+- Includes NetworkManager, Wi-Fi (ath11k), Bluetooth, OpenSSH, ALSA audio, Nano, Git, Brightnessctl
 - All gaokun3 hardware drivers included (display, touchscreen, battery, USB-C)
 
 ## Default Login

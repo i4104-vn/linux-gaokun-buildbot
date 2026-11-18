@@ -124,7 +124,8 @@ jobs:
               dosfstools e2fsprogs \
               openssh \
               nano git \
-              python
+              python \
+              brightnessctl
 
             # Re-enable CheckSpace for the final user installation.
             sed -i "s/^#CheckSpace/CheckSpace/" /etc/pacman.conf
@@ -176,6 +177,10 @@ jobs:
             "$ROOTFS_DIR/usr/lib/firmware/qca" \
             "$ROOTFS_DIR/usr/lib/firmware/qcom/sc8280xp"
           sudo cp -a "$GAOKUN_DIR/firmware/." "$ROOTFS_DIR/usr/lib/firmware/"
+
+          # Ensure WCN6855 hw2.1 is always a valid symlink to hw2.0 (required by ath11k driver)
+          sudo rm -f "$ROOTFS_DIR/usr/lib/firmware/ath11k/WCN6855/hw2.1"
+          sudo ln -sfn hw2.0 "$ROOTFS_DIR/usr/lib/firmware/ath11k/WCN6855/hw2.1"
 
           sudo depmod -b "$ROOTFS_DIR" -a "$KREL"
 
