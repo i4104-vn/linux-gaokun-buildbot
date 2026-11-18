@@ -95,6 +95,37 @@ passwd -l root
 rm -f /etc/resolv.conf
 ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
+# Prevent automated sleep/suspend loops and watchdog bite after boot.
+# The Huawei EC reports lid state which triggers logind suspend if not ignored,
+# and S3/sleep can cause TrustZone firmware crashes on this platform.
+mkdir -p /etc/systemd/logind.conf.d
+cat > /etc/systemd/logind.conf.d/00-gaokun3.conf <<'EOF'
+[Login]
+HandleLidSwitch=ignore
+HandleLidSwitchExternalPower=ignore
+HandleLidSwitchDocked=ignore
+HandlePowerKey=poweroff
+HandleSuspendKey=ignore
+HandleHibernateKey=ignore
+EOF
+
+mkdir -p /etc/systemd/sleep.conf.d
+cat > /etc/systemd/sleep.conf.d/00-disable-sleep.conf <<'EOF'
+[Sleep]
+AllowSuspend=no
+AllowHibernation=no
+AllowSuspendThenHibernate=no
+AllowHybridSleep=no
+EOF
+
+mkdir -p /etc/systemd/system.conf.d
+cat > /etc/systemd/system.conf.d/00-watchdog.conf <<'EOF'
+[Manager]
+RuntimeWatchdogSec=0
+RebootWatchdogSec=0
+KexecWatchdogSec=0
+EOF
+
 # Services
 systemctl enable \
   NetworkManager.service \
@@ -149,7 +180,7 @@ version $KREL
 linux   /vmlinuz-$KREL
 initrd  /initramfs-$KREL.img
 devicetree /dtb-$KREL/qcom/sc8280xp-huawei-gaokun3.dtb
-options root=UUID=$ROOT_UUID rw rootwait clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave efi=noruntime fbcon=rotate:1 usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
+options root=UUID=$ROOT_UUID rw rootwait clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave modprobe.blacklist=simpledrm efi=noruntime fbcon=rotate:1 usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
 EOF
 
 CHROOT_EOF
