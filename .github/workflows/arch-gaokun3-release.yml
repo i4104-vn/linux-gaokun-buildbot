@@ -165,7 +165,13 @@ jobs:
           sudo rm -f "$ROOTFS_DIR/lib/modules/$KREL/build" \
                      "$ROOTFS_DIR/lib/modules/$KREL/source"
 
-          # Device firmware from the buildbot tree
+          # Device firmware from the buildbot tree.
+          # Remove conflicting stock firmware directories before copying
+          # (e.g. hw2.1 directory from upstream linux-firmware conflicts with symlink).
+          sudo rm -rf \
+            "$ROOTFS_DIR/usr/lib/firmware/ath11k/WCN6855" \
+            "$ROOTFS_DIR/usr/lib/firmware/qca" \
+            "$ROOTFS_DIR/usr/lib/firmware/qcom/sc8280xp"
           sudo cp -a "$GAOKUN_DIR/firmware/." "$ROOTFS_DIR/usr/lib/firmware/"
 
           sudo depmod -b "$ROOTFS_DIR" -a "$KREL"
