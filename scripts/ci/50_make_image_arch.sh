@@ -40,11 +40,20 @@ trap cleanup EXIT
 
 sudo mkdir -p "$MNT"
 sudo mount "${LOOP}p2" "$MNT"
+
+# Rsync rootfs while /boot is on ext4 (preserves all permissions and attributes)
+sudo rsync -aHAX --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' "$ROOTFS_DIR/" "$MNT/"
+install_common_image_assets "$MNT" "$GAOKUN_DIR"
+
+# Now mount ESP to /boot so mkinitcpio and bootctl write directly to ESP
 sudo mkdir -p "$MNT/boot"
 sudo mount "${LOOP}p1" "$MNT/boot"
 
-sudo rsync -aHAX --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' "$ROOTFS_DIR/" "$MNT/"
-install_common_image_assets "$MNT" "$GAOKUN_DIR"
+# Populate ESP with kernel and devicetree
+sudo cp "$ROOTFS_DIR/boot/vmlinuz-$KREL" "$MNT/boot/vmlinuz-$KREL"
+sudo mkdir -p "$MNT/boot/dtb-$KREL/qcom"
+sudo cp "$ROOTFS_DIR/boot/dtb-$KREL/qcom/sc8280xp-huawei-gaokun3.dtb" \
+  "$MNT/boot/dtb-$KREL/qcom/sc8280xp-huawei-gaokun3.dtb"
 
 sudo tee "$MNT/etc/fstab" >/dev/null <<EOF
 UUID=${ROOT_UUID}  /      ext4  defaults,noatime  0  1
@@ -96,8 +105,11 @@ systemctl enable \
   systemd-resolved.service
 
 # mkinitcpio ─────────────────────────────────────────────────────────────────
+# All essential storage and bus drivers (NVMe, Ext4, SCSI, DWC3/XHCI) are built-in
+# into the gaokun3 kernel binary (=y). Keeping MODULES empty prevents missing-module
+# errors for built-in drivers while udev hooks handle all discovered runtime devices.
 cat > /etc/mkinitcpio.conf <<'EOF'
-MODULES=(nvme ext4 usb_storage uas sd_mod scsi_mod xhci_hcd xhci_pci xhci_plat_hcd dwc3 dwc3_qcom phy-qcom-qmp-pcie phy-qcom-qmp-combo phy-qcom-qmp-usb phy-qcom-snps-femto-v2 pci-pwrctrl-pwrseq ath11k_pci i2c-hid-of typec)
+MODULES=()
 BINARIES=()
 FILES=(
   /usr/lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcadsp8280.mbn
@@ -112,12 +124,15 @@ depmod -a "$KREL"
 mkinitcpio -k "$KREL" -g "/boot/initramfs-$KREL.img"
 
 # systemd-boot ──────────────────────────────────────────────────────────────
-BOOT_EFI="/usr/lib/systemd/boot/efi/systemd-bootaa64.efi"
-if [ ! -f "$BOOT_EFI" ]; then
-  echo "systemd-boot EFI binary not found: $BOOT_EFI" >&2
-  exit 1
+bootctl --no-variables --esp-path=/boot install || bootctl --esp-path=/boot install
+
+# Ensure standard UEFI fallback bootloader path exists
+mkdir -p /boot/EFI/BOOT
+if [ -f /boot/EFI/systemd/systemd-bootaa64.efi ]; then
+  cp -f /boot/EFI/systemd/systemd-bootaa64.efi /boot/EFI/BOOT/BOOTAA64.EFI
+elif [ -f /usr/lib/systemd/boot/efi/systemd-bootaa64.efi ]; then
+  cp -f /usr/lib/systemd/boot/efi/systemd-bootaa64.efi /boot/EFI/BOOT/BOOTAA64.EFI
 fi
-bootctl --no-variables --esp-path=/boot install
 
 mkdir -p /boot/loader/entries
 
