@@ -96,6 +96,10 @@ jobs:
           sudo mount -t tmpfs tmpfs "$ROOTFS_DIR/run"
 
           sudo chroot "$ROOTFS_DIR" /bin/bash -euxo pipefail -c '
+            # Disable CheckSpace inside chroot because pacman cannot determine
+            # mount points of subdirectories in a container/chroot environment.
+            sed -i "s/^[[:space:]]*CheckSpace/#CheckSpace/" /etc/pacman.conf
+
             pacman-key --init
             pacman-key --populate archlinuxarm
 
@@ -118,6 +122,9 @@ jobs:
               openssh \
               nano git \
               python
+
+            # Re-enable CheckSpace for the final user installation.
+            sed -i "s/^#CheckSpace/CheckSpace/" /etc/pacman.conf
 
             # Trim package cache to keep the image small.
             pacman -Scc --noconfirm
