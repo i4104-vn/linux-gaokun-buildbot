@@ -179,7 +179,7 @@ EOF
 #   resulting in purple/pink horizontal scanlines and torn display.
 # - simpledrm is required for standard EFI framebuffer fallback during boot.
 cat > /boot/loader/entries/arch-gaokun3.conf <<EOF
-title   Arch Linux ARM - Huawei gaokun3
+title   Arch Linux
 version $KREL
 linux   /vmlinuz-$KREL
 initrd  /initramfs-$KREL.img
