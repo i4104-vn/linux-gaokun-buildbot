@@ -2,27 +2,12 @@ name: Build Image - Arch Linux ARM Gaokun3
 
 on:
   workflow_dispatch:
-    inputs:
-      rebuild_package_rpms:
-        description: Rebuild gaokun package RPMs before image build
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: write
 
 jobs:
-  build-package-rpms:
-    if: ${{ github.event.inputs.rebuild_package_rpms == 'true' }}
-    uses: ./.github/workflows/gaokun3-package-rpms.yml
-    with:
-      build_el2: false
-    secrets: inherit
-
   build-and-release:
-    needs: build-package-rpms
-    if: ${{ !cancelled() && (needs.build-package-rpms.result == 'success' || needs.build-package-rpms.result == 'skipped') }}
     runs-on: ubuntu-24.04-arm
     env:
       TZ: UTC
@@ -30,9 +15,12 @@ jobs:
       IMAGE_CHUNK_SIZE: 1900M
       GAOKUN_DIR: ${{ github.workspace }}
       WORKDIR: ${{ github.workspace }}/build-arch
+      KERN_SRC: ${{ github.workspace }}/build-arch/linux
+      KERN_SRC_BASE: ${{ github.workspace }}/build-arch/linux
+      KERN_OUT: ${{ github.workspace }}/build-arch/kernel-out
       ROOTFS_DIR: ${{ github.workspace }}/build-arch/rootfs
       ARTIFACT_DIR: ${{ github.workspace }}/build-arch/artifacts
-      PACKAGE_RPMS_DIR: ${{ github.workspace }}/build-arch/package-rpms
+      BUILD_EL2: "false"
 
     steps:
       - name: Checkout
@@ -47,129 +35,58 @@ jobs:
           done
           echo "IMAGE_FILE=$WORKDIR/archlinuxarm-gaokun3.img" >> "$GITHUB_ENV"
 
+      - name: Checkout kernel source
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.KERNEL_REPOSITORY }}
+          ref: ${{ env.KERNEL_COMMIT }}
+          fetch-depth: 1
+          path: build-arch/linux
+
       - name: Install host dependencies
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            rsync kmod curl jq rpm2cpio cpio \
+            git make gcc bc bison flex cpio rsync kmod \
+            libssl-dev libelf-dev dwarves ccache \
             parted dosfstools e2fsprogs zstd xz-utils \
-            libarchive-tools python3
+            libarchive-tools curl jq python3
 
-      - name: Prepare build workspace
+      - name: Restore ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: gaokun3-arch-ccache-${{ env.KERNEL_COMMIT }}-${{ hashFiles('build.env') }}
+          restore-keys: |
+            gaokun3-arch-ccache-${{ env.KERNEL_COMMIT }}-
+            gaokun3-arch-ccache-
+
+      - name: Build kernel
         run: |
           set -euxo pipefail
-          mkdir -p "$WORKDIR" "$ROOTFS_DIR" "$ARTIFACT_DIR"
-
-      - name: Resolve package release tag
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euxo pipefail
-
-          if [[ "${{ github.event.inputs.rebuild_package_rpms }}" == "true" ]]; then
-            package_release_tag="${{ needs.build-package-rpms.outputs.package_release_tag }}"
-          else
-            safe_kernel_tag="${KERNEL_TAG//\//-}"
-            safe_kernel_tag="${safe_kernel_tag//[^A-Za-z0-9._-]/-}"
-            prefix="gaokun3-rpms-${safe_kernel_tag}-std-"
-
-            releases_json="$WORKDIR/releases.json"
-            curl -fsSL \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-              -o "$releases_json"
-
-            package_release_tag="$(jq -r --arg prefix "$prefix" '.[] | select(.tag_name | startswith($prefix)) | .tag_name' "$releases_json" | head -n 1)"
-            if [[ -z "$package_release_tag" ]]; then
-              echo "no package release found for prefix ${prefix}" >&2
-              exit 1
-            fi
-          fi
-
-          echo "PACKAGE_RELEASE_TAG=$package_release_tag" >> "$GITHUB_ENV"
-
-      - name: Download gaokun package RPMs
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euxo pipefail
-          mkdir -p "$PACKAGE_RPMS_DIR"
-
-          api_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${PACKAGE_RELEASE_TAG}"
-          release_json="$WORKDIR/package-release.json"
-
-          curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "$api_url" \
-            -o "$release_json"
-
-          asset_name="package-manifest.json"
-          asset_url="$(jq -r --arg name "$asset_name" '.assets[] | select(.name == $name) | .url' "$release_json")"
-
-          if [[ -z "$asset_url" || "$asset_url" == "null" ]]; then
-            echo "missing asset ${asset_name} in release ${PACKAGE_RELEASE_TAG}" >&2
-            exit 1
-          fi
-
-          curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/octet-stream" \
-            "$asset_url" \
-            -o "$PACKAGE_RPMS_DIR/$asset_name"
-
-          manifest_path="$PACKAGE_RPMS_DIR/package-manifest.json"
-          manifest_kernel_tag="$(jq -r '.kernel_tag' "$manifest_path")"
-          manifest_kernel_commit="$(jq -r '.kernel_commit' "$manifest_path")"
-          if [[ "$manifest_kernel_commit" != "$KERNEL_COMMIT" ]]; then
-            echo "Package source commit does not match build.env; rebuild the packages." >&2
-            exit 1
-          fi
-
-          if [[ "$manifest_kernel_tag" != "$KERNEL_TAG" ]]; then
-            echo "package release kernel tag mismatch: expected ${KERNEL_TAG}, got ${manifest_kernel_tag}" >&2
-            exit 1
-          fi
-
-          asset_names=(
-            "$(jq -r '.kernels.standard.packages.kernel' "$manifest_path")"
-            "$(jq -r '.kernels.standard.packages.kernel_modules' "$manifest_path")"
-            "$(jq -r '.packages.firmware' "$manifest_path")"
-          )
-
-          for asset_name in "${asset_names[@]}"; do
-            asset_url="$(jq -r --arg name "$asset_name" '.assets[] | select(.name == $name) | .url' "$release_json")"
-
-            if [[ -z "$asset_url" || "$asset_url" == "null" ]]; then
-              echo "missing asset ${asset_name} in release ${PACKAGE_RELEASE_TAG}" >&2
-              exit 1
-            fi
-
-            curl -fsSL \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              -H "Accept: application/octet-stream" \
-              "$asset_url" \
-              -o "$PACKAGE_RPMS_DIR/$asset_name"
-          done
+          mkdir -p "$WORKDIR" "$ARTIFACT_DIR"
+          chmod +x scripts/ci/20_build_kernel_variants.sh
+          scripts/ci/20_build_kernel_variants.sh
 
       - name: Bootstrap Arch Linux ARM rootfs
         run: |
           set -euxo pipefail
-          ARCH_TARBALL="$WORKDIR/ArchLinuxARM-aarch64-latest.tar.gz"
+          mkdir -p "$ROOTFS_DIR"
+
           curl -fL --retry 3 \
             https://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz \
-            -o "$ARCH_TARBALL"
+            -o "$WORKDIR/archlinux-arm64.tar.gz"
 
-          sudo bsdtar -xpf "$ARCH_TARBALL" -C "$ROOTFS_DIR"
+          sudo bsdtar -xpf "$WORKDIR/archlinux-arm64.tar.gz" -C "$ROOTFS_DIR"
 
           # Provide DNS for pacman inside the chroot.
           sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
           if [ -f /run/systemd/resolve/resolv.conf ]; then
             sudo cp /run/systemd/resolve/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
           else
-            printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee "$ROOTFS_DIR/etc/resolv.conf" >/dev/null
+            printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' \
+              | sudo tee "$ROOTFS_DIR/etc/resolv.conf" >/dev/null
           fi
 
           sudo mount --bind /dev "$ROOTFS_DIR/dev"
@@ -187,7 +104,7 @@ jobs:
             pacman -Su --noconfirm
 
             # Remove the stock kernel and generic firmware — the gaokun3-specific
-            # kernel and firmware from the RPM packages replace them.
+            # kernel and firmware are installed directly from the build output.
             pacman -Rdd --noconfirm linux-aarch64 linux-firmware 2>/dev/null || true
             rm -rf /boot/vmlinuz-* /boot/initramfs-* /boot/dtb-* /usr/lib/modules/*
 
@@ -212,27 +129,35 @@ jobs:
           sudo umount "$ROOTFS_DIR/sys"
           sudo umount "$ROOTFS_DIR/run"
 
-          # Clean up the temporary DNS; the image script sets the final config.
+          # Clean up temporary DNS; the image script sets the final config.
           sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
 
-      - name: Install gaokun kernel and firmware from RPMs
+      - name: Install gaokun3 kernel, modules and firmware
         run: |
           set -euxo pipefail
-          manifest_path="$PACKAGE_RPMS_DIR/package-manifest.json"
-          KREL="$(jq -r '.kernels.standard.release' "$manifest_path")"
-          echo "$KREL" > "$WORKDIR/kernel-release.txt"
+          KREL="$(cat "$WORKDIR/kernel-release.txt")"
+          DTB_NAME="sc8280xp-huawei-gaokun3.dtb"
 
-          kernel_rpm="$(jq -r '.kernels.standard.packages.kernel' "$manifest_path")"
-          modules_rpm="$(jq -r '.kernels.standard.packages.kernel_modules' "$manifest_path")"
-          firmware_rpm="$(jq -r '.packages.firmware' "$manifest_path")"
+          # Kernel image and DTB
+          sudo install -Dm644 "$KERN_OUT/arch/arm64/boot/Image" \
+            "$ROOTFS_DIR/boot/vmlinuz-$KREL"
+          sudo install -Dm644 "$KERN_OUT/System.map" \
+            "$ROOTFS_DIR/boot/System.map-$KREL"
+          sudo install -Dm644 "$KERN_OUT/.config" \
+            "$ROOTFS_DIR/boot/config-$KREL"
+          sudo install -Dm644 \
+            "$KERN_OUT/arch/arm64/boot/dts/qcom/$DTB_NAME" \
+            "$ROOTFS_DIR/boot/dtb-$KREL/qcom/$DTB_NAME"
 
-          for rpm_name in "$kernel_rpm" "$modules_rpm" "$firmware_rpm"; do
-            rpm2cpio "$PACKAGE_RPMS_DIR/$rpm_name" \
-              | (cd "$ROOTFS_DIR" && sudo cpio -idm --no-absolute-filenames 2>/dev/null)
-          done
+          # Kernel modules
+          sudo make -C "$KERN_SRC" O="$KERN_OUT" ARCH=arm64 \
+            INSTALL_MOD_PATH="$ROOTFS_DIR" modules_install
+          sudo rm -f "$ROOTFS_DIR/lib/modules/$KREL/build" \
+                     "$ROOTFS_DIR/lib/modules/$KREL/source"
 
-          # Fedora RPMs place modules under /usr/lib/modules.
-          # On Arch /lib -> /usr/lib, so both paths work.
+          # Device firmware from the buildbot tree
+          sudo cp -a "$GAOKUN_DIR/firmware/." "$ROOTFS_DIR/usr/lib/firmware/"
+
           sudo depmod -b "$ROOTFS_DIR" -a "$KREL"
 
       - name: Create disk image and configure boot
