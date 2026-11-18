@@ -1,0 +1,211 @@
+name: Build Image - Arch Linux ARM Gaokun3
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_tag:
+        description: Linux kernel tag
+        required: true
+        default: "v7.2-rc2"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-24.04-arm
+    env:
+      TZ: UTC
+      KERNEL_TAG: ${{ github.event.inputs.kernel_tag || 'v7.2-rc2' }}
+      BUILD_EL2: "false"
+      IMAGE_SIZE: 6G
+      IMAGE_CHUNK_SIZE: 1900M
+      GAOKUN_DIR: ${{ github.workspace }}
+      WORKDIR: ${{ github.workspace }}/build-arch
+      KERN_SRC: ${{ github.workspace }}/build-arch/mainline-linux
+      KERN_SRC_BASE: ${{ github.workspace }}/build-arch/mainline-linux-base
+      KERN_OUT: ${{ github.workspace }}/build-arch/kernel-out
+      ROOTFS_DIR: ${{ github.workspace }}/build-arch/rootfs
+      ARTIFACT_DIR: ${{ github.workspace }}/build-arch/artifacts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Checkout Linux source
+        uses: actions/checkout@v6
+        with:
+          repository: torvalds/linux
+          ref: ${{ env.KERNEL_TAG }}
+          fetch-depth: 1
+          path: build-arch/mainline-linux
+
+      - name: Install host dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            git make gcc bc bison flex cpio rsync kmod \
+            libssl-dev libelf-dev dwarves ccache \
+            parted dosfstools e2fsprogs zstd xz-utils \
+            libarchive-tools curl jq python3
+
+      - name: Restore ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: gaokun3-arch-ccache-${{ env.KERNEL_TAG }}-${{ hashFiles('patches/*.patch', 'defconfig/**', 'dts/**', 'drivers/**', 'firmware/**', 'scripts/ci/*.sh') }}
+          restore-keys: |
+            gaokun3-arch-ccache-${{ env.KERNEL_TAG }}-
+            gaokun3-arch-ccache-
+
+      - name: Build gaokun kernel
+        run: |
+          set -euxo pipefail
+          mkdir -p "$WORKDIR" "$ARTIFACT_DIR"
+          echo "IMAGE_FILE=$WORKDIR/archlinuxarm-gaokun3.img" >> "$GITHUB_ENV"
+          chmod +x scripts/ci/20_build_kernel_variants.sh
+          scripts/ci/20_build_kernel_variants.sh
+
+      - name: Bootstrap Arch Linux ARM rootfs
+        run: |
+          set -euxo pipefail
+          mkdir -p "$ROOTFS_DIR"
+
+          curl -fL --retry 5 --insecure \
+            http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz \
+            -o "$WORKDIR/archlinux-arm64.tar.gz"
+
+          sudo bsdtar -xpf "$WORKDIR/archlinux-arm64.tar.gz" -C "$ROOTFS_DIR"
+
+          # Provide DNS for pacman inside the chroot.
+          sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
+          if [ -f /run/systemd/resolve/resolv.conf ]; then
+            sudo cp /run/systemd/resolve/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+          else
+            printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' \
+              | sudo tee "$ROOTFS_DIR/etc/resolv.conf" >/dev/null
+          fi
+
+          sudo mount --bind /dev "$ROOTFS_DIR/dev"
+          sudo mount --bind /dev/pts "$ROOTFS_DIR/dev/pts"
+          sudo mount -t proc proc "$ROOTFS_DIR/proc"
+          sudo mount -t sysfs sys "$ROOTFS_DIR/sys"
+          sudo mount -t tmpfs tmpfs "$ROOTFS_DIR/run"
+
+          sudo chroot "$ROOTFS_DIR" /bin/bash -euxo pipefail -c '
+            # Disable CheckSpace inside chroot because pacman cannot determine
+            # mount points of subdirectories in a container/chroot environment.
+            sed -i "s/^[[:space:]]*CheckSpace/#CheckSpace/" /etc/pacman.conf
+
+            pacman-key --init
+            pacman-key --populate archlinuxarm
+
+            # Refresh keyring first to avoid signature failures on old tarballs.
+            pacman -Sy --noconfirm archlinuxarm-keyring
+            pacman -Su --noconfirm
+
+            # Remove the stock kernel and generic firmware — the gaokun3-specific
+            # kernel and firmware are installed directly from the build output.
+            pacman -Rdd --noconfirm linux-aarch64 linux-firmware 2>/dev/null || true
+            rm -rf /boot/vmlinuz-* /boot/initramfs-* /boot/dtb-* /usr/lib/modules/*
+
+            pacman -S --noconfirm --needed \
+              base sudo \
+              networkmanager wpa_supplicant \
+              bluez bluez-utils \
+              alsa-utils alsa-ucm-conf \
+              mkinitcpio \
+              dosfstools e2fsprogs \
+              openssh \
+              nano git \
+              python
+
+            # Re-enable CheckSpace for the final user installation.
+            sed -i "s/^#CheckSpace/CheckSpace/" /etc/pacman.conf
+
+            # Trim package cache to keep the image small.
+            pacman -Scc --noconfirm
+
+            # Terminate any background daemons (e.g. gpg-agent from pacman-key)
+            gpgconf --homedir /etc/pacman.d/gnupg --kill all 2>/dev/null || true
+          '
+
+          for m in "$ROOTFS_DIR/dev/pts" "$ROOTFS_DIR/dev" "$ROOTFS_DIR/proc" "$ROOTFS_DIR/sys" "$ROOTFS_DIR/run"; do
+            if mountpoint -q "$m"; then
+              sudo umount "$m" 2>/dev/null || sudo umount -l "$m" 2>/dev/null || true
+            fi
+          done
+
+          # Clean up temporary DNS; the image script sets the final config.
+          sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
+
+      - name: Install gaokun3 kernel, modules and firmware
+        run: |
+          set -euxo pipefail
+          KREL="$(cat "$WORKDIR/kernel-release.txt")"
+          DTB_NAME="sc8280xp-huawei-gaokun3.dtb"
+
+          # Kernel image and DTB
+          sudo install -Dm644 "$KERN_OUT/arch/arm64/boot/Image" \
+            "$ROOTFS_DIR/boot/vmlinuz-$KREL"
+          sudo install -Dm644 "$KERN_OUT/System.map" \
+            "$ROOTFS_DIR/boot/System.map-$KREL"
+          sudo install -Dm644 "$KERN_OUT/.config" \
+            "$ROOTFS_DIR/boot/config-$KREL"
+          sudo install -Dm644 \
+            "$KERN_OUT/arch/arm64/boot/dts/qcom/$DTB_NAME" \
+            "$ROOTFS_DIR/boot/dtb-$KREL/qcom/$DTB_NAME"
+
+          # Kernel modules
+          sudo make -C "$KERN_SRC" O="$KERN_OUT" ARCH=arm64 \
+            INSTALL_MOD_PATH="$ROOTFS_DIR" modules_install
+          sudo rm -f "$ROOTFS_DIR/lib/modules/$KREL/build" \
+                     "$ROOTFS_DIR/lib/modules/$KREL/source"
+
+          # Device firmware from the buildbot tree.
+          # Remove conflicting stock firmware directories before copying
+          # (e.g. hw2.1 directory from upstream linux-firmware conflicts with symlink).
+          sudo rm -rf \
+            "$ROOTFS_DIR/usr/lib/firmware/ath11k/WCN6855" \
+            "$ROOTFS_DIR/usr/lib/firmware/qca" \
+            "$ROOTFS_DIR/usr/lib/firmware/qcom/sc8280xp"
+          sudo cp -a "$GAOKUN_DIR/firmware/." "$ROOTFS_DIR/usr/lib/firmware/"
+
+          sudo depmod -b "$ROOTFS_DIR" -a "$KREL"
+
+      - name: Create disk image and configure boot
+        run: |
+          chmod +x scripts/ci/50_make_image_arch.sh
+          scripts/ci/50_make_image_arch.sh
+
+      - name: Package image and generate release info
+        id: package
+        run: |
+          chmod +x scripts/ci/60_package_release_arch.sh
+          scripts/ci/60_package_release_arch.sh
+          TAG_NAME="$(cat "$WORKDIR/tag-name.txt")"
+          KREL="$(cat "$WORKDIR/kernel-release-export.txt")"
+          PACKAGE_GLOB="$(cat "$WORKDIR/package-glob.txt")"
+          RELEASE_BODY_FILE="$(cat "$WORKDIR/release-body-file.txt")"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "artifact_dir=$ARTIFACT_DIR" >> "$GITHUB_OUTPUT"
+          echo "kernel_release=$KREL" >> "$GITHUB_OUTPUT"
+          echo "package_glob=$PACKAGE_GLOB" >> "$GITHUB_OUTPUT"
+          echo "release_body_file=$RELEASE_BODY_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifacts (workflow)
+        uses: actions/upload-artifact@v6
+        with:
+          name: arch-gaokun3-build
+          path: |
+            ${{ steps.package.outputs.artifact_dir }}/${{ steps.package.outputs.package_glob }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2.6.1
+        with:
+          tag_name: ${{ steps.package.outputs.tag_name }}
+          name: Arch Linux ARM - gaokun3 - ${{ steps.package.outputs.kernel_release }}
+          body_path: ${{ steps.package.outputs.artifact_dir }}/${{ steps.package.outputs.release_body_file }}
+          files: |
+            ${{ steps.package.outputs.artifact_dir }}/${{ steps.package.outputs.package_glob }}
