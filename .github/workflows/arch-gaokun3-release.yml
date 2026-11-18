@@ -74,8 +74,8 @@ jobs:
           set -euxo pipefail
           mkdir -p "$ROOTFS_DIR"
 
-          curl -fL --retry 3 \
-            https://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz \
+          curl -fL --retry 5 --insecure \
+            http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz \
             -o "$WORKDIR/archlinux-arm64.tar.gz"
 
           sudo bsdtar -xpf "$WORKDIR/archlinux-arm64.tar.gz" -C "$ROOTFS_DIR"
