@@ -95,7 +95,9 @@ ensure_source_tree() {
     echo "Applying standard gaokun3 patches..."
     git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/upstream/*.patch
     git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/others/*.patch
-    git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/media/*.patch
+    if [[ -d "$GAOKUN_DIR/patches/media" ]] && compgen -G "$GAOKUN_DIR/patches/media/*.patch" > /dev/null; then
+        git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/media/*.patch || echo "Skipping incompatible media patches"
+    fi
     git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
 }
 

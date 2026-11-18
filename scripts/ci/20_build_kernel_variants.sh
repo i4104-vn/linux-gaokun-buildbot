@@ -46,7 +46,7 @@ build_variant() {
   fi
 
   make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
-  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
+  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)" Image modules dtbs
   make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" modules_prepare
 }
 
@@ -62,10 +62,20 @@ snapshot_tree() {
 mkdir -p "$WORKDIR"
 
 configure_git_identity "$KERN_SRC"
-git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/upstream/*.patch
-git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/others/*.patch
-git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/media/*.patch
-git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
+if [[ -f "$KERN_SRC/arch/arm64/configs/gaokun3_defconfig" ]]; then
+  echo "Downstream kernel tree detected, skipping patch application."
+else
+  echo "Applying upstream patches..."
+  git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/upstream/*.patch
+  echo "Applying other patches..."
+  git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/others/*.patch
+  if [[ -d "$GAOKUN_DIR/patches/media" ]] && compgen -G "$GAOKUN_DIR/patches/media/*.patch" > /dev/null; then
+    echo "Applying media patches..."
+    git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/media/*.patch || echo "Skipping incompatible media patches"
+  fi
+  echo "Applying gaokun3 DTS and defconfig patch..."
+  git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
+fi
 
 ccache -z || true
 build_variant "$KERN_SRC" "$KERN_OUT"
